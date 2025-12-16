@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\Customer;
 use App\Models\InventoryItem;
 use App\Models\InventoryTransaction;
+use App\Models\Payment;
 use App\Services\NotificationService;
 use Illuminate\Support\Facades\DB;
 
@@ -132,7 +133,18 @@ class OrderController extends Controller
             'water_price' => 'required|numeric|min:0',
             'is_delivery' => 'boolean',
             'delivery_fee' => 'nullable|numeric|min:0',
-            'delivery_user_id' => 'nullable|exists:users,id',
+            'delivery_user_id' => [
+                'nullable',
+                'exists:users,id',
+                function ($attribute, $value, $fail) {
+                    if ($value) {
+                        $user = \App\Models\User::find($value);
+                        if ($user && !in_array($user->role, ['delivery', 'helper'])) {
+                            $fail('The selected delivery personnel must be a delivery or helper.');
+                        }
+                    }
+                },
+            ],
             'delivery_date' => 'nullable|date',
             'payment_status' => 'required|in:paid,unpaid',
             'payment_method' => 'required|in:cash,gcash,none',
@@ -199,6 +211,19 @@ class OrderController extends Controller
             // Create inventory transactions
             $this->createInventoryTransactions($order);
             
+            // Create payment record if order is paid
+            if ($validated['payment_status'] === 'paid' && $validated['payment_method'] !== 'none') {
+                Payment::create([
+                    'order_id' => $order->id,
+                    'user_id' => auth()->id(),
+                    'amount' => $validated['total_amount'],
+                    'payment_method' => $validated['payment_method'],
+                    'payment_reference' => $validated['payment_reference'] ?? null,
+                    'payment_date' => now()->toDateString(),
+                    'notes' => 'Initial payment for order',
+                ]);
+            }
+            
             DB::commit();
         } catch (\Exception $e) {
             DB::rollBack();
@@ -225,7 +250,7 @@ class OrderController extends Controller
      */
     public function show($id)
     {
-        $order = \App\Models\Order::with(['customer', 'user', 'deliveryPerson', 'inventoryTransactions'])->findOrFail($id);
+        $order = \App\Models\Order::with(['customer', 'user', 'deliveryPerson', 'inventoryTransactions', 'payments.user'])->findOrFail($id);
         
         return view('orders.show', compact('order'));
     }
@@ -297,7 +322,18 @@ class OrderController extends Controller
             'water_price' => 'required|numeric|min:0',
             'is_delivery' => 'boolean',
             'delivery_fee' => 'nullable|numeric|min:0',
-            'delivery_user_id' => 'nullable|exists:users,id',
+            'delivery_user_id' => [
+                'nullable',
+                'exists:users,id',
+                function ($attribute, $value, $fail) {
+                    if ($value) {
+                        $user = \App\Models\User::find($value);
+                        if ($user && !in_array($user->role, ['delivery', 'helper'])) {
+                            $fail('The selected delivery personnel must be a delivery or helper.');
+                        }
+                    }
+                },
+            ],
             'delivery_date' => 'nullable|date',
             'payment_status' => 'required|in:paid,unpaid',
             'payment_method' => 'required|in:cash,gcash,none',
@@ -355,7 +391,26 @@ class OrderController extends Controller
         $deliveryTotal = $validated['is_delivery'] ? ($validated['quantity'] * $validated['delivery_fee']) : 0;
         $validated['total_amount'] = $waterTotal + $deliveryTotal + $replacementCost;
         
+        // Handle payment status changes
+        $oldPaymentStatus = $order->payment_status;
         $order->update($validated);
+        
+        // Create payment record if status changed from unpaid to paid
+        if ($oldPaymentStatus === 'unpaid' && $validated['payment_status'] === 'paid' && $validated['payment_method'] !== 'none') {
+            // Check if payment already exists
+            $existingPayment = Payment::where('order_id', $order->id)->first();
+            if (!$existingPayment) {
+                Payment::create([
+                    'order_id' => $order->id,
+                    'user_id' => auth()->id(),
+                    'amount' => $validated['total_amount'],
+                    'payment_method' => $validated['payment_method'],
+                    'payment_reference' => $validated['payment_reference'] ?? null,
+                    'payment_date' => now()->toDateString(),
+                    'notes' => 'Payment recorded via order update',
+                ]);
+            }
+        }
 
         // If delivery details were set/updated, notify customer once
         if ($order->is_delivery && is_null($order->delivery_notified_at)) {

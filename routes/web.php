@@ -8,6 +8,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\PaymentController;
 
 // Authentication Routes
 Route::get('/', function () {
@@ -35,6 +36,10 @@ Route::middleware(['auth'])->group(function () {
     Route::resource('orders', OrderController::class);
     Route::post('/orders/{id}/complete', [OrderController::class, 'complete'])->name('orders.complete');
     Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
+    
+    // Payments
+    Route::post('/orders/{orderId}/payments', [PaymentController::class, 'store'])->name('payments.store');
+    Route::delete('/payments/{id}', [PaymentController::class, 'destroy'])->name('payments.destroy');
     
     // Deliveries
     Route::get('/deliveries', [DeliveryController::class, 'index'])->name('deliveries.index');

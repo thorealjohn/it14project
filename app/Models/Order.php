@@ -99,4 +99,36 @@ class Order extends Model
     {
         return $this->hasMany(InventoryTransaction::class);
     }
+
+    /**
+     * Get payments associated with this order
+     */
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    /**
+     * Calculate total amount paid for this order
+     */
+    public function getTotalPaidAttribute()
+    {
+        return $this->payments()->sum('amount');
+    }
+
+    /**
+     * Calculate remaining balance for this order
+     */
+    public function getRemainingBalanceAttribute()
+    {
+        return max(0, $this->total_amount - $this->total_paid);
+    }
+
+    /**
+     * Check if order is fully paid
+     */
+    public function isFullyPaid()
+    {
+        return $this->total_paid >= $this->total_amount;
+    }
 }
